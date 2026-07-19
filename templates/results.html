@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PacketGuard — Analysis Report #{{ session.id }}</title>
+  <meta name="description" content="PacketGuard threat detection report for {{ session.filename }} — {{ results|length }} threat(s) found." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <!-- ── Navigation ─────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <a href="{{ url_for('index') }}" class="nav-back">← Back</a>
+      <span class="nav-icon">🛡️</span>
+      <span class="nav-title">PacketGuard</span>
+    </div>
+    <span class="nav-badge">Analysis Report</span>
+  </nav>
+
+  <!-- ── Flash messages ─────────────────────────────────────────── -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="container flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash--{{ category }}" role="alert">
+            <span class="flash-icon">
+              {% if category == 'error' %}❌{% elif category == 'success' %}✅{% else %}ℹ️{% endif %}
+            </span>
+            <span>{{ message }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <!-- ── Report header ──────────────────────────────────────────── -->
+  <header class="report-header">
+    <div class="container">
+      <div class="report-meta">
+        <span class="report-id">Report #{{ session.id }}</span>
+        <span class="report-file">📁 {{ session.filename }}</span>
+        <span class="report-time">
+          🕐 {{ session.uploaded_at.strftime('%Y-%m-%d %H:%M UTC') if session.uploaded_at else 'Unknown' }}
+        </span>
+      </div>
+      <h1 class="report-title">
+        {% if results|length > 0 %}
+          <span class="threat-count threat-count--{{ 'high' if results|length > 3 else 'medium' if results|length > 1 else 'low' }}">
+            {{ results|length }}
+          </span>
+          Threat{{ 's' if results|length != 1 else '' }} Detected
+        {% else %}
+          <span class="threat-count threat-count--clean">✓</span>
+          No Threats Detected
+        {% endif %}
+      </h1>
+    </div>
+  </header>
+
+  <!-- ── Summary stats ──────────────────────────────────────────── -->
+  <section class="container stats-grid" aria-label="Summary statistics">
+    <div class="stat-card" id="stat-packets">
+      <span class="stat-value">{{ session.packet_count }}</span>
+      <span class="stat-label">Packets Analysed</span>
+    </div>
+    <div class="stat-card" id="stat-dropped">
+      <span class="stat-value">{{ session.dropped_row_count }}</span>
+      <span class="stat-label">Rows Dropped</span>
+    </div>
+    <div class="stat-card" id="stat-threats">
+      <span class="stat-value {{ 'stat-value--danger' if results|length > 0 else 'stat-value--safe' }}">
+        {{ results|length }}
+      </span>
+      <span class="stat-label">Threats Found</span>
+    </div>
+    <div class="stat-card" id="stat-layers">
+      <span class="stat-value">{{ layer_breakdown|length }}</span>
+      <span class="stat-label">Detection Layer{{ 's' if layer_breakdown|length != 1 else '' }}</span>
+    </div>
+  </section>
+
+  <!-- ── Layer breakdown ────────────────────────────────────────── -->
+  {% if layer_breakdown %}
+  <section class="container layer-breakdown" aria-labelledby="layer-heading">
+    <h2 id="layer-heading" class="section-title"><span>🔬</span> Detection Layer Breakdown</h2>
+    <div class="layer-chips">
+      {% for layer, count in layer_breakdown.items() %}
+        <div class="layer-chip
+          {% if 'rule-based + machine-learning' in layer %}layer-chip--both
+          {% elif 'machine-learning' in layer %}layer-chip--ml
+          {% else %}layer-chip--rule{% endif %}
+        ">
+          <span class="layer-chip-count">{{ count }}</span>
+          <span class="layer-chip-name">
+            {% if layer == 'rule-based + machine-learning' %}
+              Rule + ML (both agreed)
+            {% elif layer == 'machine-learning' %}
+              ML Engine Only
+            {% else %}
+              Rule Engine Only
+            {% endif %}
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ── Threats table ──────────────────────────────────────────── -->
+  <main class="container results-section" aria-labelledby="results-heading">
+    <h2 id="results-heading" class="section-title"><span>🚨</span> Threat Report</h2>
+
+    {% if results %}
+      <div class="results-table-wrap">
+        <table class="data-table" id="results-table">
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Threat Type</th>
+              <th scope="col">Source IP</th>
+              <th scope="col">Destination IP</th>
+              <th scope="col">Detection Layer</th>
+              <th scope="col">Reason</th>
+              <th scope="col">Window</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in results %}
+            <tr class="result-row result-row--{{ 'both' if 'machine-learning' in r.layer and 'rule' in r.layer else 'ml' if 'machine-learning' in r.layer else 'rule' }}">
+              <td class="row-num">{{ loop.index }}</td>
+              <td>
+                <span class="threat-badge threat-badge--{{
+                  'flood' if 'Flood' in r.threat_type else
+                  'scan'  if 'Scan'  in r.threat_type else
+                  'arp'   if 'ARP'   in r.threat_type else
+                  'ml'
+                }}">
+                  {{ r.threat_type }}
+                </span>
+              </td>
+              <td><code class="ip-addr">{{ r.src_ip or '—' }}</code></td>
+              <td><code class="ip-addr">{{ r.dst_ip or '—' }}</code></td>
+              <td>
+                <span class="layer-label layer-label--{{
+                  'both' if 'machine-learning' in r.layer and 'rule' in r.layer else
+                  'ml'   if 'machine-learning' in r.layer else
+                  'rule'
+                }}">
+                  {{ r.layer }}
+                </span>
+              </td>
+              <td class="reason-cell">{{ r.reason }}</td>
+              <td class="window-cell">
+                {% if r.window_start is not none and r.window_end is not none %}
+                  <span class="window-range">
+                    {{ "%.1f"|format(r.window_start) }}s – {{ "%.1f"|format(r.window_end) }}s
+                  </span>
+                {% else %}
+                  <span class="no-window">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state" role="status">
+        <span class="empty-state-icon">🟢</span>
+        <p class="empty-state-title">Clean capture — no threats detected</p>
+        <p class="empty-state-text">
+          Neither the rule engine nor the ML engine flagged any suspicious flows
+          in this capture. This could mean the traffic is benign, or the capture
+          duration was too short for low-rate attacks to manifest.
+        </p>
+      </div>
+    {% endif %}
+  </main>
+
+  <!-- ── Actions ────────────────────────────────────────────────── -->
+  <div class="container actions-row">
+    <a href="{{ url_for('index') }}" class="btn btn--primary">
+      ← Upload Another Capture
+    </a>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <p>PacketGuard · MCA Mini-Project · Built with Flask, pandas &amp; scikit-learn</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PacketGuard — Network Threat Detection</title>
+  <meta name="description" content="PacketGuard: upload a Wireshark/tshark CSV export and get an instant two-layer (rule-based + ML) network threat analysis report." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <!-- ── Navigation ─────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="nav-icon">🛡️</span>
+      <span class="nav-title">PacketGuard</span>
+    </div>
+    <span class="nav-badge">v1.0 · MCA Project</span>
+  </nav>
+
+  <!-- ── Hero ───────────────────────────────────────────────────── -->
+  <header class="hero">
+    <div class="hero-glow"></div>
+    <div class="container hero-content">
+      <div class="hero-badge">Two-Layer Detection Engine</div>
+      <h1 class="hero-title">Network Threat<br /><span class="gradient-text">Detection &amp; Analysis</span></h1>
+      <p class="hero-subtitle">
+        Upload a tshark CSV export and get an instant analysis powered by<br />
+        hand-crafted detection rules <em>and</em> Isolation Forest anomaly detection.
+      </p>
+      <div class="hero-chips">
+        <span class="chip chip--rule">📋 Rule-Based Engine</span>
+        <span class="chip chip--ml">🤖 Isolation Forest ML</span>
+        <span class="chip chip--db">🗄️ SQLite Persistence</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Flash messages ─────────────────────────────────────────── -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="container flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash--{{ category }}" role="alert">
+            <span class="flash-icon">
+              {% if category == 'error' %}❌{% elif category == 'success' %}✅{% else %}ℹ️{% endif %}
+            </span>
+            <span>{{ message }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <!-- ── Main content ───────────────────────────────────────────── -->
+  <main class="container main-grid">
+
+    <!-- Upload card -->
+    <section class="card card--upload" aria-labelledby="upload-heading">
+      <div class="card-header">
+        <h2 id="upload-heading" class="card-title">
+          <span class="card-icon">📁</span> Upload Capture File
+        </h2>
+        <p class="card-subtitle">CSV export from tshark (explicit-field format)</p>
+      </div>
+
+      <form id="upload-form" method="POST" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+        <div class="drop-zone" id="drop-zone">
+          <div class="drop-zone-content">
+            <div class="drop-zone-icon">📡</div>
+            <p class="drop-zone-primary">Drag &amp; drop your CSV here</p>
+            <p class="drop-zone-secondary">or</p>
+            <label for="capture_file" class="btn btn--primary">
+              Browse Files
+            </label>
+            <input
+              id="capture_file"
+              name="capture_file"
+              type="file"
+              accept=".csv"
+              class="file-input-hidden"
+              required
+              aria-label="Select a tshark CSV capture file"
+            />
+            <p class="drop-zone-hint" id="file-name-display">No file selected</p>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn--submit btn--full" id="analyse-btn">
+          <span class="btn-icon">🔍</span> Analyse Capture
+        </button>
+      </form>
+    </section>
+
+    <!-- Instructions card -->
+    <section class="card card--instructions" aria-labelledby="instructions-heading">
+      <div class="card-header">
+        <h2 id="instructions-heading" class="card-title">
+          <span class="card-icon">⚡</span> How to Generate the Input File
+        </h2>
+      </div>
+
+      <div class="instruction-steps">
+        <div class="step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            <p class="step-title">Capture traffic with Wireshark or tcpdump</p>
+            <p class="step-text">Save as a <code>.pcap</code> or <code>.pcapng</code> file.</p>
+          </div>
+        </div>
+        <div class="step">
+          <span class="step-num">2</span>
+          <div class="step-body">
+            <p class="step-title">Export using <code>tshark</code></p>
+            <p class="step-text">Run the exact command below in your terminal:</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="copy-btn" id="copy-cmd-btn" onclick="copyCommand()" aria-label="Copy tshark command">
+            📋 Copy
+          </button>
+        </div>
+        <pre class="code-block-body"><code id="tshark-cmd">tshark -r capture.pcap \
+    -T fields \
+    -e frame.time_relative \
+    -e ip.src \
+    -e ip.dst \
+    -e tcp.srcport \
+    -e udp.srcport \
+    -e tcp.dstport \
+    -e udp.dstport \
+    -e _ws.col.Protocol \
+    -e frame.len \
+    -e tcp.flags.syn \
+    -e tcp.flags.ack \
+    -e tcp.flags.reset \
+    -e eth.src \
+    -e eth.dst \
+    -E header=y -E separator=, -E quote=d -E occurrence=f \
+    > capture.csv</code></pre>
+      </div>
+
+      <div class="info-box">
+        <span class="info-box-icon">⚠️</span>
+        <div>
+          <p class="info-box-title">Why tshark explicit-field format?</p>
+          <p class="info-box-text">
+            The default Wireshark "Export Packet Dissections" packs multiple values
+            into display-formatted strings. The <code>tshark -T fields</code> format
+            gives one clean value per column with no ambiguity.
+          </p>
+        </div>
+      </div>
+
+      <div class="info-box info-box--warn">
+        <span class="info-box-icon">🌐</span>
+        <div>
+          <p class="info-box-title">Limitations</p>
+          <p class="info-box-text">
+            IPv4 only. IPv6 packets are detected and reported, but excluded from
+            analysis. Authentication is not required — this is a single-user
+            academic tool.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Past sessions ──────────────────────────────────────────── -->
+  {% if sessions %}
+  <section class="container past-sessions" aria-labelledby="history-heading">
+    <h2 id="history-heading" class="section-title">
+      <span>🕐</span> Recent Analyses
+    </h2>
+    <div class="sessions-table-wrap">
+      <table class="data-table" id="sessions-table">
+        <thead>
+          <tr>
+            <th scope="col">ID</th>
+            <th scope="col">Filename</th>
+            <th scope="col">Uploaded At</th>
+            <th scope="col">Packets</th>
+            <th scope="col">Dropped</th>
+            <th scope="col">Report</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sessions %}
+          <tr>
+            <td><span class="session-id">#{{ s.id }}</span></td>
+            <td><span class="filename">{{ s.filename }}</span></td>
+            <td>{{ s.uploaded_at.strftime('%Y-%m-%d %H:%M UTC') if s.uploaded_at else '—' }}</td>
+            <td>{{ s.packet_count }}</td>
+            <td>{{ s.dropped_row_count }}</td>
+            <td>
+              <a href="{{ url_for('results', session_id=s.id) }}" class="btn btn--sm btn--outline">
+                View →
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ── Footer ─────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <p>PacketGuard · MCA Mini-Project · Built with Flask, pandas &amp; scikit-learn</p>
+  </footer>
+
+  <script>
+    // ── File input label update ──────────────────────────────────
+    document.getElementById('capture_file').addEventListener('change', function () {
+      const display = document.getElementById('file-name-display');
+      display.textContent = this.files[0] ? this.files[0].name : 'No file selected';
+      display.classList.toggle('file-selected', !!this.files[0]);
+    });
+
+    // ── Drag-and-drop ────────────────────────────────────────────
+    const zone = document.getElementById('drop-zone');
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragging'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('dragging');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        const input = document.getElementById('capture_file');
+        input.files = files;
+        document.getElementById('file-name-display').textContent = files[0].name;
+        document.getElementById('file-name-display').classList.add('file-selected');
+      }
+    });
+
+    // ── Copy tshark command ──────────────────────────────────────
+    function copyCommand() {
+      const cmd = document.getElementById('tshark-cmd').innerText;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const btn = document.getElementById('copy-cmd-btn');
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => btn.textContent = '📋 Copy', 2000);
+      });
+    }
+
+    // ── Submit loading state ─────────────────────────────────────
+    document.getElementById('upload-form').addEventListener('submit', function() {
+      const btn = document.getElementById('analyse-btn');
+      btn.textContent = '⏳ Analysing…';
+      btn.disabled = true;
+    });
+  </script>
+</body>
+</html>
