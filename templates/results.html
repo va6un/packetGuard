@@ -182,10 +182,18 @@
   </main>
 
   <!-- ── Actions ────────────────────────────────────────────────── -->
-  <div class="container actions-row">
+  <div class="container actions-row" style="display: flex; gap: 12px; flex-wrap: wrap;">
     <a href="{{ url_for('index') }}" class="btn btn--primary">
       ← Upload Another Capture
     </a>
+    {% if results %}
+    <a href="{{ url_for('export_results', session_id=session.id, format='csv') }}" class="btn btn--outline">
+      📥 Download CSV
+    </a>
+    <a href="{{ url_for('export_results', session_id=session.id, format='json') }}" class="btn btn--outline">
+      📄 Download JSON
+    </a>
+    {% endif %}
   </div>
 
   <!-- ── Footer ─────────────────────────────────────────────────── -->

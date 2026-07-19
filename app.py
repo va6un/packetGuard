@@ -189,6 +189,70 @@ def results(session_id: int):
     )
 
 
+@app.route("/results/<int:session_id>/export")
+def export_results(session_id: int):
+    """Export the threat report as a downloadable CSV or JSON file."""
+    import csv
+    import io
+    from flask import jsonify, make_response
+
+    session_row = db.get_session(session_id)
+    if session_row is None:
+        flash(f"Session {session_id} not found.", "error")
+        return redirect(url_for("index"))
+
+    result_rows = db.get_results(session_id)
+    export_format = request.args.get("format", "csv").lower()
+
+    if export_format == "json":
+        data = {
+            "session_id": session_row.id,
+            "filename": session_row.filename,
+            "uploaded_at": session_row.uploaded_at.isoformat() if session_row.uploaded_at else None,
+            "packet_count": session_row.packet_count,
+            "dropped_row_count": session_row.dropped_row_count,
+            "threats_found": len(result_rows),
+            "results": [
+                {
+                    "threat_type": r.threat_type,
+                    "src_ip": r.src_ip,
+                    "dst_ip": r.dst_ip,
+                    "reason": r.reason,
+                    "layer": r.layer,
+                    "window_start": r.window_start,
+                    "window_end": r.window_end,
+                }
+                for r in result_rows
+            ],
+        }
+        response = jsonify(data)
+        response.headers["Content-Disposition"] = f"attachment; filename=packetguard_report_{session_id}.json"
+        return response
+    else:
+        # Default: CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "Threat Type", "Source IP", "Destination IP", "Layer", "Reason",
+            "Window Start (s)", "Window End (s)"
+        ])
+        for r in result_rows:
+            writer.writerow([
+                r.threat_type,
+                r.src_ip or "—",
+                r.dst_ip or "—",
+                r.layer,
+                r.reason,
+                f"{r.window_start:.1f}" if r.window_start is not None else "—",
+                f"{r.window_end:.1f}" if r.window_end is not None else "—",
+            ])
+        response = make_response(output.getvalue())
+        response.headers["Content-Disposition"] = f"attachment; filename=packetguard_report_{session_id}.csv"
+        response.headers["Content-Type"] = "text/csv"
+        return response
+
+
+
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
