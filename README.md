@@ -1,45 +1,86 @@
-# PacketGuard 🛡️
+# 🛡️ PacketGuard
 
-**PacketGuard** is a lightweight web-based network threat detection tool built as an MCA mini-project. It accepts a Wireshark/tshark packet capture export (CSV) and runs it through a **two-layer detection engine** — hand-crafted rules plus Isolation Forest machine learning — to produce a single, deduplicated, human-readable threat report.
-
----
-
-## Table of Contents
-
-1. [Setup](#setup)
-2. [How to Generate the Input CSV](#how-to-generate-the-input-csv)
-3. [Running the App](#running-the-app)
-4. [Running the Tests](#running-the-tests)
-5. [Architecture & Module Responsibilities](#architecture--module-responsibilities)
-6. [Detection Rules Reference](#detection-rules-reference)
-7. [Limitations](#limitations)
+**PacketGuard** is a lightweight, web-based network threat detection and analysis tool built using Flask, pandas, and scikit-learn. It processes exported network traffic metadata from Wireshark/tshark, extracts flow-level features, evaluates threats through a hybrid detection engine (hand-crafted rules + Isolation Forest machine learning), and serves a consolidated, interactive report.
 
 ---
 
-## Setup
+## 🚀 Key Features
 
-**Prerequisites:** Python 3.10+, `pip`, `tshark` (for generating input files).
+*   **Two-Layer Analysis Engine**: Merges traditional deterministic rules with an unsupervised `IsolationForest` ML model for anomaly detection.
+*   **Vectorized Data Processing**: Powered entirely by vectorized pandas operations—no manual row-by-row packet looping for maximum performance.
+*   **Explainable Machine Learning**: Rather than outputting a "black box" anomaly flag, the ML layer calculates feature z-scores to explain *which* specific network features drove the anomaly.
+*   **Intelligent Consolidation**: Automatically merges overlapping rule-based and ML detections targeting the same flow to ensure zero duplication in the final reports.
+*   **SQLite Audit Persistence**: Persists upload audits and threat logs in SQLite via SQLAlchemy ORM for bookmarkable, permanent analysis reports.
 
+---
+
+## 🛠️ Tech Stack
+
+*   **Backend framework**: Flask
+*   **Data Analysis**: pandas & numpy
+*   **Machine Learning**: scikit-learn (`IsolationForest`, `StandardScaler`)
+*   **Database ORM**: SQLAlchemy (SQLite)
+*   **Frontend**: Jinja2 Server-Rendered templates + Custom Vanilla CSS (Dark glassmorphism theme)
+*   **Unit Testing**: pytest
+
+---
+
+## 📋 Table of Contents
+
+1. [Quickstart Setup](#-quickstart-setup)
+2. [tshark CSV Generation](#-tshark-csv-generation)
+3. [Architecture Flow](#-architecture-flow)
+4. [Detection Signature Reference](#-detection-signature-reference)
+5. [Limitations](#-limitations)
+
+---
+
+## ⚡ Quickstart Setup
+
+> [!NOTE]
+> Ensure you have **Python 3.10+** installed before proceeding.
+
+### 1. Clone & Navigate
 ```bash
-# 1. Clone / download the project
-cd PacketGuard
+git clone https://github.com/va6un/packetGuard.git
+cd packetGuard
+```
 
-# 2. (Optional) Create a virtual environment
+### 2. Set Up Virtual Environment (Recommended)
+```bash
+# Windows
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS / Linux
+.venv\Scripts\activate
 
-# 3. Install dependencies
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install Dependencies
+```bash
 pip install -r requirements.txt
+```
+
+### 4. Run the Server
+```bash
+python app.py
+```
+Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your browser.
+
+### 5. Running the Test Suite
+Ensure the code is robust and green:
+```bash
+python -m pytest tests/ -v
 ```
 
 ---
 
-## How to Generate the Input CSV
+## 📡 tshark CSV Generation
 
-PacketGuard requires the **tshark explicit-field CSV format**, not the default Wireshark GUI export. The tshark format gives one clean, unambiguous value per column, which makes automated parsing reliable.
+PacketGuard standardizes on the **tshark explicit-field CSV export format**. This provides clean, isolated, numeric data columns rather than display-formatted compound strings.
 
-Run the following command on your `.pcap` or `.pcapng` file:
+Run this terminal command to export your `.pcap` or `.pcapng` file:
 
 ```bash
 tshark -r capture.pcap \
@@ -62,93 +103,57 @@ tshark -r capture.pcap \
     > capture.csv
 ```
 
-The resulting `capture.csv` is what you upload via the web UI.
-
-> **Why not the Wireshark GUI export?**  
-> Wireshark's "File → Export Packet Dissections → CSV" packs multiple decoded values into display-formatted strings (e.g. a single TCP flags column reads `"0x00000002 (SYN)"`). The tshark `-T fields` format gives each flag its own numeric column, which is unambiguous and trivially parseable.
+> [!WARNING]
+> Do not use Wireshark's GUI *Export Packet Dissections as CSV*. It compresses multiple flags and descriptors into textual fields (e.g. `'0x00000002 (SYN)'`), which cannot be efficiently parsed by the pandas ingestion layer.
 
 ---
 
-## Running the App
+## 🏗️ Architecture Flow
 
-```bash
-python app.py
-```
-
-Open your browser at **http://127.0.0.1:5000**.
-
-Upload any tshark-format CSV. The app will:
-1. Ingest and validate the file.
-2. Extract flow-level features (10-second and full-session windows).
-3. Run rule-based detection (SYN Flood, Port Scan ×2, ARP Spoofing).
-4. Run Isolation Forest anomaly detection.
-5. Merge and deduplicate both layers' results.
-6. Persist the results to `packetguard.db` (SQLite).
-7. Redirect you to the report page at `/results/<session_id>`.
-
-Reports can be revisited later — the URL is bookmarkable.
-
-A synthetic sample file is included for testing:
+Data flows strictly in one direction from capture ingestion through to the SQLite database and presentation layer:
 
 ```
-sample_data/sample_capture.csv
+┌──────────────┐      ┌────────────────────┐      ┌───────────────┐
+│  Ingestion   │ ───> │ Feature Extraction │ ───> │  Rule Engine  │ ───┐
+│ (ingestion)  │      │(feature_extraction)│      │ (rule_engine) │    │
+└──────────────┘      └────────────────────┘      └───────────────┘    │    ┌───────────────┐
+                                                            │          ├──> │ Consolidation │ ──> DB / UI
+                                                            v          │    │(consolidation)│
+                                                  ┌───────────────┐    │    └───────────────┘
+                                                  │   ML Engine   │ ───┘
+                                                  │  (ml_engine)  │
+                                                  └───────────────┘
 ```
 
-It contains a clear SYN flood pattern (192.168.1.100 → 10.0.0.1) and a fast port scan (192.168.1.200 → 10.0.0.2). Upload it to verify the end-to-end pipeline.
+### Module Responsibilities
+
+| Module | Responsibility |
+| :--- | :--- |
+| **Ingestion** (`ingestion.py`) | Schema validation, column normalization, type coercion (timestamps, ports, hex flags), packet cleanups, and dropping malformed/unsupported rows. |
+| **Feature Extraction** (`feature_extraction.py`) | Directs packet streams into ordered flow pairs `(src_ip, dst_ip)` and aggregates stats across both 10-second (short) and full-session time windows. |
+| **Rule Engine** (`rule_engine.py`) | Evaluates deterministic signature rules (SYN Flood ratios, fast port scans, slow port scans, and ARP spoofing checks). |
+| **ML Engine** (`ml_engine.py`) | Fits an unsupervised `IsolationForest` to the flow table, scoring statistical outliers. Explains anomalies by reporting the top features by z-score magnitude. |
+| **Consolidation** (`result_consolidation.py`) | Merges rules and ML flags, deduplicates overlapping flows, and assigns severity sorting weights. |
+| **Persistence** (`db.py`) | SQLite database schema implementation utilizing UploadSession and DetectionResult models. |
 
 ---
 
-## Running the Tests
+## 🚨 Detection Signature Reference
 
-```bash
-python -m pytest tests/ -v
-```
-
-Each module has its own test file in `tests/`. Tests use small synthetic DataFrames — no real capture files are required (except the end-to-end ingestion test, which uses `sample_data/sample_capture.csv`).
-
-Expected output: all tests pass.
-
----
-
-## Architecture & Module Responsibilities
-
-Data flows strictly left-to-right:
-
-```
-Ingestion → Feature Extraction → ┬─ Rule Engine ─┐
-                                  └─ ML Engine   ─┴→ Consolidation → UI / DB
-```
-
-| File | Responsibility |
-|---|---|
-| `ingestion.py` | Read the uploaded CSV, validate schema, rename columns, coerce types, derive TCP flag strings, drop malformed rows. Returns a clean, typed DataFrame. |
-| `feature_extraction.py` | Group packets into directed `(src_ip, dst_ip)` flows across two time windows (10-second buckets and full-session). Compute packet_count, byte_volume, packet_rate, unique_dst_ports, duration, SYN/ACK/RST counts, syn_ack_ratio, and protocol fractions — all via vectorized `groupby().agg()`. |
-| `rule_engine.py` | Apply four hand-crafted detection rules to the feature table (SYN Flood, Fast Port Scan, Slow Port Scan) and directly to the packet DataFrame (ARP Spoofing). Returns a list of flag dicts with plain-English reason strings. |
-| `ml_engine.py` | Fit `IsolationForest(contamination='auto', random_state=42)` on the flow features of the current capture (unsupervised, no pretrained model). Identify anomalies and explain each one by naming the 1–2 features with the largest absolute z-score. |
-| `result_consolidation.py` | Merge rule-based and ML flags. When the same `(src_ip, dst_ip)` pair with overlapping windows is flagged by both layers, merge into one entry (`layer = "rule-based + machine-learning"`). Sort by threat severity, then src_ip. |
-| `db.py` | SQLAlchemy ORM with two tables: `sessions` (upload audit) and `results` (per-flag persistence). Provides `init_db`, `save_session`, `save_results`, `get_session`, `get_results`. |
-| `app.py` | Flask entrypoint. Two routes: `GET /` (upload form) and `POST /upload` (pipeline orchestration), plus `GET /results/<id>` (report from DB). Catches all custom ingestion exceptions and converts them to flash messages — no raw stack traces in the browser. |
+| Threat Name | Analysis Window | Trigger Condition |
+| :--- | :--- | :--- |
+| **SYN Flood** | Short (10s) Window | `syn_ack_ratio > 5.0` AND `syn_count >= 20` |
+| **Port Scan (Fast)** | Short (10s) Window | `unique_dst_ports >= 15` |
+| **Port Scan (Slow)** | Full-Session Window | `unique_dst_ports >= 20` (suppressed if already caught by Fast Scan) |
+| **ARP Spoofing** | Raw Packet DataFrame | Single `src_ip` mapped to multiple physical `eth.src` MAC addresses |
+| **Anomalous Flow** | Full Feature Dataset | Scored outlier (`IsolationForest` predict == -1), explained by top z-scores |
 
 ---
 
-## Detection Rules Reference
+## ⚠️ Limitations
 
-| Rule | Input | Trigger Condition |
-|---|---|---|
-| **SYN Flood** | Short-window (10s) features | `syn_ack_ratio > 5.0` AND `syn_count >= 20` |
-| **Port Scan (Fast)** | Short-window (10s) features | `unique_dst_ports >= 15` within one 10-second window |
-| **Port Scan (Slow)** | Full-session features | `unique_dst_ports >= 20` across the entire capture; suppressed if the same pair was already caught by the fast-scan rule |
-| **ARP Spoofing** | Raw packet DataFrame | One IP address mapped to 2+ distinct MAC addresses across the capture |
-| **Anomalous Flow (ML)** | Full feature table | `IsolationForest` scores the flow as an outlier (`predict() == -1`); reason string names the top 1–2 z-score features |
-
-All thresholds are named constants in `rule_engine.py` — easy to adjust for your network baseline.
-
----
-
-## Limitations
-
-- **IPv4 only.** IPv6 packets are detected and counted in the drop report, but excluded from threat analysis. Re-run tshark with `--ipv4` to pre-filter if needed.
-- **No live capture.** Traffic must be captured externally with Wireshark or tcpdump and exported with tshark before uploading.
-- **No user authentication.** Single-user academic tool — do not expose to the public internet without adding auth.
-- **No persistent ML model.** Isolation Forest is fitted fresh on each uploaded capture. It detects statistical outliers *within that capture*, not against a historical baseline.
-- **No IPv6 support.** Designed and tested for IPv4 traffic only.
+> [!IMPORTANT]
+> Keep the following constraints in mind during presentation/evaluation:
+> *   **IPv4 Only**: IPv6 packets are identified and logged in the drop statistics, but explicitly skipped during analysis.
+> *   **Unsupervised ML**: The Isolation Forest model is fit fresh on the uploaded capture data. It identifies statistical anomalies *relative to the capture itself*, rather than against a pre-trained external baseline.
+> *   **No Live Capture**: Capturing must be performed externally using Wireshark, tcpdump, or tshark, then uploaded as a structured CSV.
